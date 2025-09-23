@@ -1,0 +1,37 @@
+name: CI
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: smartshopper
+          POSTGRES_PASSWORD: smartshopper
+          POSTGRES_DB: smartshopper
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    - name: Install dependencies
+      run: |
+        pip install -r backend/requirements.txt
+    - name: Run backend tests
+      run: |
+        python -m pytest backend/test_api.py
+    - name: Build frontend
+      run: |
+        cd frontend && npm install && npm run build

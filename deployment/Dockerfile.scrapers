@@ -1,0 +1,6 @@
+# Scrapers Dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY scrapers/ .
+RUN pip install scrapy requests beautifulsoup4 rapidfuzz redis
+CMD ["python", "amazon_scraper.py"]
