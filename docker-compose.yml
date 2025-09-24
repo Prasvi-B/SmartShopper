@@ -1,36 +1,119 @@
 version: '3.8'
+
 services:
+  # Frontend React App
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: ../deployment/Dockerfile.frontend
     ports:
       - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     depends_on:
       - backend
+
+  # Backend FastAPI
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: ../deployment/Dockerfile.backend
     ports:
       - "8000:8000"
-    depends_on:
-      - db
-      - redis
-  scrapers:
-    build: ./scrapers
-    depends_on:
-      - db
-      - redis
-  ml:
-    build: ./ml
-    depends_on:
-      - backend
-  db:
-    image: postgres:15
     environment:
-      POSTGRES_USER: smartshopper
-      POSTGRES_PASSWORD: smartshopper
-      POSTGRES_DB: smartshopper
-    ports:
-      - "5432:5432"
+      - DATABASE_URL=sqlite:///./smartshopper.db
+      - REDIS_URL=redis://redis:6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Redis for caching and Celery
   redis:
-    image: redis:7
+    image: redis:7-alpine
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # Celery Worker for background tasks
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: ../deployment/Dockerfile.backend
+    command: celery -A app.tasks worker --loglevel=info
+    environment:
+      - DATABASE_URL=sqlite:///./smartshopper.db
+      - REDIS_URL=redis://redis:6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+      - ./data:/app/data
+    depends_on:
+      - redis
+      - backend
+    restart: unless-stopped
+
+  # Celery Beat for scheduled tasks
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: ../deployment/Dockerfile.backend
+    command: celery -A app.tasks beat --loglevel=info
+    environment:
+      - DATABASE_URL=sqlite:///./smartshopper.db
+      - REDIS_URL=redis://redis:6379
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+      - ./data:/app/data
+    depends_on:
+      - redis
+      - backend
+    restart: unless-stopped
+
+  # ML Model Service
+  ml-service:
+    build:
+      context: ./ml
+      dockerfile: ../deployment/Dockerfile.ml
+    ports:
+      - "8001:8001"
+    environment:
+      - MODEL_PATH=/app/models
+    volumes:
+      - ./ml:/app
+      - ./ml/models:/app/models
+    restart: unless-stopped
+
+  # Scrapers Service
+  scrapers:
+    build:
+      context: ./scrapers
+      dockerfile: ../deployment/Dockerfile.scrapers
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=sqlite:///./smartshopper.db
+    volumes:
+      - ./scrapers:/app
+      - ./data:/app/data
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+
+networks:
+  default:
+    name: smartshopper-network
