@@ -1,30 +1,109 @@
-from fastapi import FastAPI
-from alert_api import router as alert_router
-from rate_limit import RateLimitMiddleware
-from pydantic import BaseModel
-from typing import List
+"""
+SmartShopper FastAPI Application with MongoDB
+"""
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import logging
 
-app = FastAPI()
-app.add_middleware(RateLimitMiddleware, max_requests=10, window=60)
-app.include_router(alert_router)
+from app.database.connection import init_db, close_mongo_connection
+from app.routes import auth, user_features, products, reviews, search, alerts
+from app.config import settings
 
-class Offer(BaseModel):
-    site: str
-    price: float
-    url: str
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-class SearchResponse(BaseModel):
-    product: str
-    offers: List[Offer]
-    review_sentiments: dict
 
-@app.get("/search", response_model=SearchResponse)
-def search(q: str):
-    # Stub/mock data for MVP
-    offers = [
-        Offer(site="Amazon", price=79999, url="https://amazon.in/iphone15"),
-        Offer(site="Flipkart", price=78999, url="https://flipkart.com/iphone15"),
-        Offer(site="Myntra", price=80500, url="https://myntra.com/iphone15")
-    ]
-    review_sentiments = {"positive": 120, "negative": 30, "neutral": 50}
-    return SearchResponse(product=q, offers=offers, review_sentiments=review_sentiments)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan events"""
+    # Startup
+    logger.info("Starting SmartShopper API...")
+    try:
+        await init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.warning(f"Failed to initialize database: {e}")
+        logger.warning("Continuing without database connection...")
+    
+    yield
+    
+    # Shutdown
+    logger.info("Shutting down SmartShopper API...")
+    await close_mongo_connection()
+
+
+# Create FastAPI application
+app = FastAPI(
+    title="SmartShopper API",
+    description="Intelligent e-commerce price comparison and sentiment analysis platform",
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.get_allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Global exception handler"""
+    logger.error(f"Global exception: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )
+
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "service": "SmartShopper API",
+        "version": "2.0.0"
+    }
+
+
+# Root endpoint
+@app.get("/")
+async def root():
+    """Root endpoint with API information"""
+    return {
+        "message": "Welcome to SmartShopper API",
+        "version": "2.0.0",
+        "description": "Intelligent e-commerce price comparison and sentiment analysis platform",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+
+# Include routers
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(user_features.router, prefix="/api/v1")
+app.include_router(search.router, prefix="/api/v1")
+app.include_router(products.router, prefix="/api/v1")
+app.include_router(reviews.router, prefix="/api/v1")
+app.include_router(alerts.router, prefix="/api/v1")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
